@@ -59,7 +59,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
         run: |
-          gh repo clone sai24255/banking-gitops1
+          gh repo clone sai24255/banking-gitops1 ./gitops
           cd gitops
 
           sed -i "s|^[[:space:]]*tag:.*|  tag: \"${GITHUB_SHA}\"|" environments/dev/values.yaml

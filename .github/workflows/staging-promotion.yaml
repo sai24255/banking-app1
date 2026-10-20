@@ -1,0 +1,100 @@
+
+name: Promote Dev Image to Staging
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-staging
+  cancel-in-progress: false
+
+jobs:
+  promote-staging:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout application repository
+        uses: actions/checkout@v4
+
+      - name: Clone GitOps repository
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+        run: |
+          gh repo clone sai24255/banking-gitops1 ./gitops
+
+      - name: Read and validate Dev image tag
+        id: image
+        run: |
+          TAG=$(python -c '
+          import re
+          from pathlib import Path
+
+          text = Path("gitops/environments/dev/values.yaml").read_text()
+          match = re.search(r"(?m)^\s+tag:\s*[\"'\"']?([a-f0-9]{40})[\"'\"']?\s*$", text)
+          if not match:
+              raise SystemExit("ERROR: Dev values must contain a 40-character commit SHA")
+          print(match.group(1))
+          ')
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Promoting image SHA: $TAG"
+
+      - name: Verify image exists in GHCR
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          docker manifest inspect \
+            "ghcr.io/sai24255/banking-app1:${IMAGE_TAG}"
+
+      - name: Update Staging image tag
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+        run: |
+          cd gitops
+
+          FILE="environments/staging/values.yaml"
+
+          python - "$FILE" "$IMAGE_TAG" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          tag = sys.argv[2]
+          text = path.read_text()
+
+          updated, count = re.subn(
+              r'(?m)^(\s+tag:\s*)["\']?[^"\'\s]+["\']?\s*$',
+              lambda match: f'{match.group(1)}"{tag}"',
+              text,
+              count=1,
+          )
+
+          if count != 1:
+              raise SystemExit("ERROR: Expected exactly one image tag in Staging values")
+
+          path.write_text(updated)
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$FILE"
+
+          if git diff --cached --quiet; then
+            echo "Staging already uses this image SHA."
+            exit 0
+          fi
+
+          git commit -m \
+            "Promote banking-app ${IMAGE_TAG} to staging"
+
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/sai24255/banking-gitops1.git"
+
+          git push origin main

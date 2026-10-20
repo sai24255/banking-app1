@@ -69,4 +69,6 @@ jobs:
 
           git add environments/dev/values.yaml
           git commit -m "Deploy banking-app image ${GITHUB_SHA} to dev"
+          git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/sai24255/banking-gitops1.git
+          
           git push origin main
